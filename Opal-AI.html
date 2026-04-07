@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>Opal AI | Intelligent Chat Assistant</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #0a0a0f; color: #eef2ff; overflow: hidden; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1e1e2a; }
+    ::-webkit-scrollbar-thumb { background: #7c3aed; border-radius: 8px; }
+    
+    /* Loading Screen */
+    .loading-screen {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, #0a0a0f, #000000);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .loading-screen.fade-out { opacity: 0; pointer-events: none; }
+    .loading-content { text-align: center; animation: fadeInScale 0.6s ease; }
+    @keyframes fadeInScale { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+    .johan-text { font-size: 1.8rem; font-weight: 400; letter-spacing: 2px; background: linear-gradient(135deg, #94a3b8, #cbd5e1); -webkit-background-clip: text; background-clip: text; color: transparent; margin-bottom: 40px; animation: pulseGlow 2s ease infinite; }
+    @keyframes pulseGlow { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; text-shadow: 0 0 20px rgba(168,85,247,0.5); } }
+    .opal-title-container { display: flex; align-items: baseline; justify-content: center; gap: 12px; flex-wrap: wrap; animation: slideUpTitle 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.3s both; }
+    @keyframes slideUpTitle { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+    .opal-main { font-size: 4rem; font-weight: 800; background: linear-gradient(135deg, #c084fc, #38bdf8, #2dd4bf); -webkit-background-clip: text; background-clip: text; color: transparent; animation: gradientShift 3s ease infinite; background-size: 200% 200%; }
+    @keyframes gradientShift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+    .opal-sub { font-size: 1.5rem; font-weight: 500; color: #a855f7; animation: fadeInRight 0.6s ease 0.5s both; }
+    @keyframes fadeInRight { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+    .loading-dots { display: flex; justify-content: center; gap: 8px; margin-top: 40px; }
+    .loading-dots span { width: 8px; height: 8px; background: #7c3aed; border-radius: 50%; animation: bounce 1.4s ease infinite; }
+    .loading-dots span:nth-child(1) { animation-delay: 0s; }
+    .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-15px); opacity: 1; } }
+    
+    /* Login Screen */
+    .login-screen {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, #0a0a0f, #000000);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+      transition: opacity 0.5s ease;
+    }
+    .login-screen.hidden { opacity: 0; pointer-events: none; }
+    .login-box {
+      background: rgba(18, 18, 26, 0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 32px;
+      padding: 40px;
+      width: 380px;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      animation: fadeInUp 0.6s ease;
+    }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    .login-box h2 {
+      text-align: center;
+      margin-bottom: 30px;
+      background: linear-gradient(135deg, #c084fc, #38bdf8);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .login-input {
+      width: 100%;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      background: #1e1e2c;
+      border: 1px solid #4c4c6e;
+      border-radius: 24px;
+      color: white;
+      font-size: 1rem;
+      outline: none;
+      transition: all 0.2s;
+    }
+    .login-input:focus { border-color: #a855f7; box-shadow: 0 0 8px rgba(168,85,247,0.3); }
+    .login-btn {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #7c3aed, #a855f7);
+      border: none;
+      border-radius: 24px;
+      color: white;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 16px;
+    }
+    .login-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(124,58,237,0.4); }
+    .google-btn {
+      width: 100%;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 24px;
+      color: white;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .google-btn:hover { background: rgba(255, 255, 255, 0.2); transform: translateY(-2px); }
+    .switch-mode {
+      text-align: center;
+      margin-top: 20px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .switch-mode:hover { color: #a855f7; }
+    .error-msg {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      border-radius: 12px;
+      padding: 10px;
+      margin-bottom: 16px;
+      color: #ef4444;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: rgba(30,30,40,0.5);
+      border-radius: 40px;
+      margin: 10px;
+    }
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #7c3aed;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logout-btn {
+      background: #ef4444;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .logout-btn:hover { background: #dc2626; transform: scale(1.05); }
+    
+    #app { display: flex; height: 100vh; width: 100%; overflow: hidden; opacity: 0; transition: opacity 0.5s ease; }
+    #app.visible { opacity: 1; }
+    
+    /* Sidebar */
+    .sidebar { width: 280px; background: rgba(18, 18, 26, 0.95); backdrop-filter: blur(4px); border-right: 1px solid rgba(139, 92, 246, 0.2); display: flex; flex-direction: column; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 20; }
+    @media (max-width: 680px) { .sidebar { position: fixed; transform: translateX(-100%); width: 75%; } .sidebar.open { transform: translateX(0); } }
+    .logo-area { padding: 1.5rem 1.2rem; font-size: 1.8rem; font-weight: 800; background: linear-gradient(135deg, #c084fc, #38bdf8, #2dd4bf); -webkit-background-clip: text; background-clip: text; color: transparent; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .new-buttons { padding: 1rem; display: flex; flex-direction: column; gap: 8px; }
+    .side-btn { background: rgba(45, 45, 62, 0.6); padding: 10px 14px; border-radius: 40px; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; text-align: center; font-weight: 500; border: 1px solid rgba(139,92,246,0.3); }
+    .side-btn:hover { background: #7c3aed; border-color: #a855f7; box-shadow: 0 0 12px rgba(124,58,237,0.5); transform: translateX(4px); }
+    .chat-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+    .chat-item { padding: 10px 14px; margin-bottom: 6px; border-radius: 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: rgba(30,30,40,0.5); border: 1px solid transparent; transition: all 0.2s ease; }
+    .chat-item.active { background: linear-gradient(95deg, #3b0764, #1e1b4b); border-left: 3px solid #38bdf8; }
+    .chat-item:hover { background: #2d2d3a; transform: translateX(4px); }
+    .chat-actions { display: flex; gap: 8px; opacity: 0; transition: opacity 0.2s ease; }
+    .chat-item:hover .chat-actions { opacity: 1; }
+    .chat-action { font-size: 12px; cursor: pointer; padding: 2px 6px; background: #1f1f2e; border-radius: 20px; }
+    .chat-action:hover { background: #7c3aed; }
+    
+    .main-panel { flex: 1; display: flex; flex-direction: column; position: relative; background: radial-gradient(circle at 20% 30%, #0c0c14, #000000); overflow: hidden; }
+    .hero { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: #94a3b8; }
+    .messages-area { flex: 1; overflow-y: auto; padding: 20px 24px; display: none; scroll-behavior: smooth; }
+    .message-row { display: flex; margin-bottom: 20px; max-width: 950px; margin-left: auto; margin-right: auto; animation: fadeSlideUp 0.4s ease; }
+    @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    .message { padding: 14px 18px; border-radius: 28px; line-height: 1.5; font-size: 0.95rem; max-width: 80%; word-wrap: break-word; box-shadow: 0 6px 14px rgba(0,0,0,0.3); }
+    .user-row { justify-content: flex-end; }
+    .user-bubble { background: linear-gradient(125deg, #7c3aed, #c026d3); color: white; border-bottom-right-radius: 6px; }
+    .ai-row { justify-content: flex-start; }
+    .ai-bubble { background: rgba(30, 30, 45, 0.9); backdrop-filter: blur(2px); border: 1px solid rgba(139, 92, 246, 0.4); border-bottom-left-radius: 6px; color: #e2e8f0; }
+    .ai-bubble pre { background: #0a0a12; border-radius: 12px; padding: 12px; overflow-x: auto; margin: 8px 0; }
+    .message-buttons { display: flex; gap: 10px; margin-top: 8px; }
+    .msg-btn { background: #2d2d3e; padding: 4px 10px; border-radius: 30px; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+    .msg-btn:hover { background: #7c3aed; transform: scale(1.05); }
+    
+    .loading-indicator { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: rgba(30, 30, 45, 0.9); border-radius: 28px; max-width: 160px; margin: 10px auto; }
+    .loading-spinner { width: 20px; height: 20px; border: 3px solid rgba(139, 92, 246, 0.3); border-top-color: #a855f7; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .input-container { position: relative; margin: 20px auto 28px; width: 70%; max-width: 800px; background: #1e1e2c; border-radius: 48px; display: flex; align-items: center; padding: 6px 6px 6px 20px; border: 1px solid #3b3b55; }
+    @media (max-width: 700px) { .input-container { width: 90%; } }
+    #chatInput { flex: 1; background: transparent; border: none; color: white; font-size: 1rem; outline: none; padding: 14px 0; }
+    .send-button { background: #a855f7; width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
+    .send-button:hover { transform: scale(1.1); background: #c084fc; }
+    
+    .settings-panel { position: fixed; right: 0; top: 0; width: 380px; height: 100%; background: linear-gradient(135deg, #11111b, #0a0a0f); border-left: 1px solid rgba(139,92,246,0.3); padding: 28px; transform: translateX(100%); transition: transform 0.4s ease; z-index: 41; overflow-y: auto; }
+    .settings-panel.open { transform: translateX(0); }
+    .settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; border-bottom: 1px solid rgba(139,92,246,0.3); padding-bottom: 16px; }
+    .close-settings { font-size: 28px; cursor: pointer; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(255,255,255,0.1); }
+    .close-settings:hover { background: #7c3aed; transform: rotate(90deg); }
+    .settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 40; opacity: 0; visibility: hidden; transition: all 0.3s ease; }
+    .settings-overlay.active { opacity: 1; visibility: visible; }
+    .debug-console { position: fixed; bottom: 10px; left: 10px; background: #000000cc; padding: 8px 12px; border-radius: 16px; font-size: 10px; font-family: monospace; max-width: 320px; max-height: 140px; overflow: auto; z-index: 40; border: 1px solid #2dd4bf; color: #a7f3d0; }
+  </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div class="loading-screen" id="loadingScreen">
+  <div class="loading-content">
+    <div class="johan-text">Johan06 Presents...</div>
+    <div class="opal-title-container">
+      <span class="opal-main">Opal AI</span>
+      <span class="opal-sub">chatbot</span>
+    </div>
+    <div class="loading-dots"><span></span><span></span><span></span></div>
+  </div>
+</div>
+
+<!-- Login Screen -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <h2>💎 Welcome to Opal AI</h2>
+    <div id="loginError" class="error-msg" style="display: none;"></div>
+    <input type="email" id="loginEmail" class="login-input" placeholder="Email">
+    <input type="password" id="loginPassword" class="login-input" placeholder="Password">
+    <button class="login-btn" onclick="opalAuth.login()">Sign In</button>
+    <div style="text-align: center; margin: 12px 0; color: #4c4c6e;">OR</div>
+    <button class="google-btn" onclick="opalAuth.googleLogin()">
+      <span style="font-weight:bold; font-size:18px;">G</span> Continue with Google
+    </button>
+    <div class="switch-mode" onclick="opalAuth.toggleMode()">
+      Don't have an account? <span style="color:#a855f7;">Create Account</span>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="sidebar" id="sidebar">
+    <div class="logo-area">💎 Opal AI</div>
+    <div class="user-info" id="userInfo">
+      <div class="user-avatar">👤</div>
+      <span id="userEmail" style="flex:1; font-size:12px; overflow:hidden;">Loading...</span>
+      <div class="logout-btn" onclick="opalAuth.logout()">Logout</div>
+    </div>
+    <div class="new-buttons">
+      <div class="side-btn" onclick="opal.createChat()">➕ New Chat</div>
+      <div class="side-btn" onclick="opal.createTempChat()">🕶️ Temporary Chat</div>
+      <div class="side-btn" onclick="opal.createSecureChat()">🔒 Secure Chat</div>
+      <div class="side-btn" onclick="opal.toggleSettings()">⚙️ Settings & API</div>
+    </div>
+    <div class="chat-list" id="chatListContainer"></div>
+  </div>
+
+  <div class="main-panel" id="mainPanel">
+    <div class="hero" id="heroCenter">
+      <h1 style="font-size:2.5rem; background: linear-gradient(135deg, #c084fc, #38bdf8); -webkit-background-clip: text; background-clip: text; color: transparent;">💎 Opal AI</h1>
+      <p>✨ Your sharp, helpful assistant ✨</p>
+      <p style="font-size:0.85rem; opacity:0.7;">"Hi! I'm Opal - thinking outside the box, always here to help"</p>
+    </div>
+    <div class="messages-area" id="messagesContainer"></div>
+    <div class="input-container">
+      <input type="text" id="chatInput" placeholder="Ask Opal anything..." autocomplete="off">
+      <div class="send-button" id="sendBtn">➤</div>
+    </div>
+  </div>
+</div>
+
+<div class="settings-overlay" id="settingsOverlay"></div>
+<div class="settings-panel" id="settingsPanel">
+  <div class="settings-header"><h3>⚙️ Opal Config</h3><div class="close-settings" id="closeSettingsBtn">✕</div></div>
+  <label>🤖 Mode:</label>
+  <select id="modeSelect"><option value="fast">⚡ Fast Mode (Instant)</option><option value="fancy">✨ Fancy Mode (Animated)</option></select>
+  <label>🌡️ Temperature: <span id="tempVal">0.85</span></label>
+  <input type="range" id="tempSlider" min="0" max="1.5" step="0.1" value="0.85">
+  <label>📡 Streaming (Fancy mode):</label><input type="checkbox" id="streamToggle">
+  <label>🐞 Debug Mode:</label><input type="checkbox" id="debugToggle">
+  <hr/>
+  <button onclick="opal.exportCurrentChat()">📤 Export as TXT</button>
+  <button onclick="opal.exportChatHTML()">📄 Export as HTML</button>
+  <button onclick="opal.clearAllChats()">🗑️ Clear All Chats</button>
+</div>
+<div id="debugPanel" class="debug-console" style="display: none;"></div>
+
+<script>
+// ================================
+// FIREBASE CONFIGURATION - YOUR SETUP
+// ================================
+const firebaseConfig = {
+  apiKey: "AIzaSyAY7ys37mWRa8AnNX-z87uLAkEtII3elPU",
+  authDomain: "opal-ai-chat.firebaseapp.com",
+  projectId: "opal-ai-chat",
+  storageBucket: "opal-ai-chat.firebasestorage.app",
+  messagingSenderId: "20527527841",
+  appId: "1:20527527841:web:92edd00d4b6d674bc23de0",
+  measurementId: "G-N92RC8LV6J"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ================================
+// AUTHENTICATION SYSTEM
+// ================================
+const opalAuth = {
+  isLoginMode: true,
+  
+  showError(msg) {
+    const errorDiv = document.getElementById('loginError');
+    errorDiv.textContent = msg;
+    errorDiv.style.display = 'block';
+    setTimeout(() => errorDiv.style.display = 'none', 3000);
+  },
+  
+  toggleMode() {
+    this.isLoginMode = !this.isLoginMode;
+    const btn = document.querySelector('.login-btn');
+    const switchText = document.querySelector('.switch-mode span');
+    const title = document.querySelector('.login-box h2');
+    
+    if (this.isLoginMode) {
+      btn.textContent = 'Sign In';
+      switchText.textContent = 'Create Account';
+      title.innerHTML = '💎 Welcome Back to Opal AI';
+    } else {
+      btn.textContent = 'Create Account';
+      switchText.textContent = 'Back to Sign In';
+      title.innerHTML = '💎 Join Opal AI';
+    }
+  },
+  
+  async login() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    
+    if (!email || !password) {
+      this.showError('Please enter email and password');
+      return;
+    }
+    
+    try {
+      if (this.isLoginMode) {
+        await auth.signInWithEmailAndPassword(email, password);
+      } else {
+        try {
+          await auth.createUserWithEmailAndPassword(email, password);
+          await db.collection('users').doc(auth.currentUser.uid).set({
+            email: email,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            chats: []
+          });
+        } catch (createError) {
+          if (createError.code === 'auth/email-already-in-use') {
+            this.showError('Email already exists! Please sign in instead.');
+          } else {
+            throw createError;
+          }
+          return;
+        }
+      }
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('app').classList.add('visible');
+      document.getElementById('loadingScreen').style.display = 'none';
+      await opal.loadUserData();
+    } catch (error) {
+      this.showError(error.message);
+    }
+  },
+  
+  async googleLogin() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+      const result = await auth.signInWithPopup(provider);
+      const user = result.user;
+      const userDoc = await db.collection('users').doc(user.uid).get();
+      if (!userDoc.exists) {
+        await db.collection('users').doc(user.uid).set({
+          email: user.email,
+          name: user.displayName,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          chats: []
+        });
+      }
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('app').classList.add('visible');
+      document.getElementById('loadingScreen').style.display = 'none';
+      await opal.loadUserData();
+    } catch (error) {
+      this.showError(error.message);
+    }
+  },
+  
+  async logout() {
+    await auth.signOut();
+    localStorage.clear();
+    location.reload();
+  }
+};
+
+// ================================
+// OPAL AI CORE
+// ================================
+const OpalApp = (function(){
+  const DEFAULT_GROQ_API_KEY = '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';
+  
+  let chats = [];
+  let currentChatId = null;
+  let settings = { mode: 'fancy', temperature: 0.85, streaming: true, debug: false };
+  let apiConfig = { 
+    type: 'default',
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    key: DEFAULT_GROQ_API_KEY,
+    model: 'llama-3.3-70b-versatile'
+  };
+  let isLoading = false;
+  let currentUser = null;
+  
+  const OPAL_IDENTITY = "You are Opal, a sharp, helpful, and creative AI assistant. Your name is Opal. Always introduce yourself as Opal. You think outside the box and apologize sincerely when things go wrong. Use emojis occasionally (💎, ✨, 🤔, 🎯, 💭). Sign off with '— 💎 Opal' for longer responses.";
+  
+  async function loadUserData() {
+    const user = auth.currentUser;
+    if (!user) return;
+    currentUser = user;
+    document.getElementById('userEmail').textContent = user.email;
+    
+    const userDoc = await db.collection('users').doc(user.uid).get();
+    if (userDoc.exists && userDoc.data().chats) {
+      chats = userDoc.data().chats;
+    } else {
+      chats = [];
+    }
+    
+    if (!chats.length) createNewChatInternal(false);
+    if (chats.length) currentChatId = chats[0].id;
+    renderSidebar();
+    if (currentChatId) renderMessages(currentChatId);
+    applyUISettings();
+  }
+  
+  async function saveChatsToFirestore() {
+    if (!currentUser) return;
+    await db.collection('users').doc(currentUser.uid).set({ chats: chats }, { merge: true });
+  }
+  
+  function saveChats() { 
+    localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
+    saveChatsToFirestore();
+  }
+  
+  function applyOpalPersonality(rawResponse) {
+    let response = rawResponse;
+    if (Math.random() > 0.65 && !response.match(/^[💎✨🤔🎯💭]/)) {
+      const openings = ["💎 Opal here: ", "✨ Opal thinking... ", "🤔 Let me think: "];
+      response = openings[Math.floor(Math.random() * openings.length)] + response;
+    }
+    if (response.length > 120 && Math.random() > 0.6 && !response.includes("— 💎 Opal")) {
+      response += "\n\n— 💎 Opal";
+    }
+    return response;
+  }
+  
+  function createNewChatInternal(locked=false, passphrase=null){
+    const id = Date.now() + Math.random()*1000;
+    let newChat = { id, messages: [], title: 'New Chat', createdAt: Date.now(), locked: locked, temp: false };
+    if(locked && passphrase) newChat.passHash = btoa(passphrase);
+    chats.unshift(newChat);
+    currentChatId = id;
+    saveChats();
+    renderSidebar();
+    renderMessages(currentChatId);
+    showChatUI();
+    return newChat;
+  }
+  
+  function showChatUI(){ 
+    document.getElementById('heroCenter').style.display = 'none';
+    document.getElementById('messagesContainer').style.display = 'block';
+  }
+  
+  function renderSidebar(){
+    const container = document.getElementById('chatListContainer');
+    if(!container) return;
+    container.innerHTML = '';
+    chats.forEach(chat => {
+      const div = document.createElement('div');
+      div.className = `chat-item ${currentChatId === chat.id ? 'active' : ''}`;
+      const title = chat.title || (chat.locked ? '🔒 Secure' : (chat.temp ? '🕶️ Temp' : 'Chat'));
+      div.innerHTML = `<span style="flex:1;">${title}</span><div class="chat-actions"><span class="chat-action" data-action="rename" data-id="${chat.id}">✏️</span><span class="chat-action" data-action="delete" data-id="${chat.id}">🗑️</span></div>`;
+      div.addEventListener('click', (e) => {
+        if(e.target.classList?.contains('chat-action')) return;
+        currentChatId = chat.id;
+        renderSidebar();
+        renderMessages(currentChatId);
+        showChatUI();
+      });
+      const renameBtn = div.querySelector('[data-action="rename"]');
+      const delBtn = div.querySelector('[data-action="delete"]');
+      renameBtn?.addEventListener('click', (e) => { e.stopPropagation(); renameChat(chat.id); });
+      delBtn?.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
+      container.appendChild(div);
+    });
+  }
+  
+  function renameChat(id){
+    const chat = chats.find(c=>c.id==id);
+    if(chat){
+      let newName = prompt('Rename chat:', chat.title || 'Chat');
+      if(newName) { chat.title = newName.slice(0,30); saveChats(); renderSidebar(); }
+    }
+  }
+  
+  function deleteChat(id){
+    if(confirm('Delete this chat permanently?')){
+      chats = chats.filter(c=>c.id!=id);
+      if(currentChatId == id) currentChatId = chats.length ? chats[0].id : null;
+      saveChats();
+      if(!chats.length) createNewChatInternal(false);
+      if(currentChatId) renderMessages(currentChatId);
+      else document.getElementById('heroCenter').style.display = 'flex';
+      renderSidebar();
+    }
+  }
+  
+  function renderMessages(chatId){
+    const chat = chats.find(c=>c.id == chatId);
+    const container = document.getElementById('messagesContainer');
+    if(!container || !chat) return;
+    container.innerHTML = '';
+    for(let msg of chat.messages){
+      const row = document.createElement('div');
+      row.className = `message-row ${msg.role === 'user' ? 'user-row' : 'ai-row'}`;
+      const bubble = document.createElement('div');
+      bubble.className = `message ${msg.role === 'user' ? 'user-bubble' : 'ai-bubble'}`;
+      if(msg.role === 'ai'){
+        bubble.innerHTML = marked.parse(msg.content || '');
+        setTimeout(()=>{ bubble.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block)); },10);
+        const btnDiv = document.createElement('div');
+        btnDiv.className = 'message-buttons';
+        const copyBtn = document.createElement('span'); copyBtn.className='msg-btn'; copyBtn.innerText='📋 Copy';
+        copyBtn.onclick = () => { navigator.clipboard.writeText(msg.content); alert('Copied!'); };
+        const regenBtn = document.createElement('span'); regenBtn.className='msg-btn'; regenBtn.innerText='🔄 Regenerate';
+        regenBtn.onclick = async () => { await regenerateLastAI(chatId); };
+        btnDiv.append(copyBtn, regenBtn);
+        bubble.appendChild(btnDiv);
+      } else {
+        bubble.innerText = msg.content;
+      }
+      row.appendChild(bubble);
+      container.appendChild(row);
+    }
+    container.scrollTop = container.scrollHeight;
+  }
+  
+  async function regenerateLastAI(chatId){
+    const chat = chats.find(c=>c.id==chatId);
+    if(!chat || chat.messages.length<2) return;
+    const lastUserMsg = [...chat.messages].reverse().find(m=>m.role==='user');
+    if(!lastUserMsg) return;
+    if(chat.messages[chat.messages.length-1].role === 'ai') chat.messages.pop();
+    saveChats();
+    renderMessages(chatId);
+    await sendMessageToAI(lastUserMsg.content, chatId);
+  }
+  
+  async function sendMessageToAI(userText, chatId){
+    const chat = chats.find(c=>c.id==chatId);
+    if(!chat || isLoading) return;
+    isLoading = true;
+    
+    chat.messages.push({ role: 'user', content: userText });
+    saveChats();
+    renderMessages(chatId);
+    
+    const apiMessages = [{ role: "system", content: OPAL_IDENTITY }, ...chat.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
+    
+    const aiMsgIndex = chat.messages.length;
+    chat.messages.push({ role: 'ai', content: '' });
+    saveChats();
+    renderMessages(chatId);
+    
+    let fullResponse = '';
+    try{
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.key}` };
+      const bodyObj = { model: apiConfig.model, messages: apiMessages, temperature: settings.temperature, stream: false };
+      const resp = await fetch(apiConfig.url, { method: 'POST', headers, body: JSON.stringify(bodyObj) });
+      const json = await resp.json();
+      fullResponse = json.choices?.[0]?.message?.content || "Opal here - let me think... 💭";
+      const personalityResponse = applyOpalPersonality(fullResponse);
+      chat.messages[aiMsgIndex].content = personalityResponse;
+      renderMessages(chatId);
+    }catch(err){
+      chat.messages[aiMsgIndex].content = `💎 Opal's apologies! Error: ${err.message}`;
+      renderMessages(chatId);
+    }
+    isLoading = false;
+    if(!chat.temp) saveChats();
+  }
+  
+  async function sendCurrentMessage(){
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if(!text || isLoading) return;
+    if(!currentChatId) createNewChatInternal(false);
+    input.value = '';
+    await sendMessageToAI(text, currentChatId);
+  }
+  
+  function exportCurrentChat(){
+    const chat = chats.find(c=>c.id==currentChatId);
+    if(!chat || !chat.messages.length) { alert('No messages to export'); return; }
+    let content = `💎 Opal AI Chat Export\n${new Date().toLocaleString()}\n${'='.repeat(50)}\n\n`;
+    chat.messages.forEach(msg => { content += `${msg.role.toUpperCase()}:\n${msg.content}\n\n${'-'.repeat(40)}\n\n`; });
+    const blob = new Blob([content], {type: 'text/plain'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `opal_chat_${Date.now()}.txt`;
+    link.click();
+  }
+  
+  function exportChatHTML(){
+    const chat = chats.find(c=>c.id==currentChatId);
+    if(!chat) return;
+    let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Opal AI Export</title><style>body{font-family:sans-serif;background:#0a0a0f;color:#eee;padding:20px;} .user{background:#7c3aed;padding:12px;border-radius:12px;margin:10px 0;} .ai{background:#1e1e2c;padding:12px;border-radius:12px;margin:10px 0;}</style></head><body><h1>💎 Opal AI Chat Export</h1><p>${new Date()}</p>`;
+    chat.messages.forEach(msg => { html += `<div class="${msg.role}"><strong>${msg.role.toUpperCase()}:</strong><br/>${marked.parse(msg.content)}</div>`; });
+    html += `</body></html>`;
+    const blob = new Blob([html], {type: 'text/html'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `opal_chat_${Date.now()}.html`;
+    link.click();
+  }
+  
+  function toggleSettings(){
+    document.getElementById('settingsPanel').classList.toggle('open');
+    document.getElementById('settingsOverlay').classList.toggle('active');
+  }
+  
+  function clearAllChats(){
+    if(confirm('Delete ALL chats permanently?')){
+      chats = [];
+      createNewChatInternal(false);
+      saveChats();
+      renderSidebar();
+    }
+  }
+  
+  function applyUISettings(){
+    document.getElementById('modeSelect').value = settings.mode;
+    document.getElementById('tempSlider').value = settings.temperature;
+    document.getElementById('tempVal').innerText = settings.temperature;
+    document.getElementById('streamToggle').checked = settings.streaming;
+    document.getElementById('debugToggle').checked = settings.debug;
+  }
+  
+  function saveUISettings(){
+    settings.mode = document.getElementById('modeSelect').value;
+    settings.temperature = parseFloat(document.getElementById('tempSlider').value);
+    settings.streaming = document.getElementById('streamToggle').checked;
+    settings.debug = document.getElementById('debugToggle').checked;
+    localStorage.setItem('opal_settings', JSON.stringify(settings));
+    alert('Settings saved!');
+  }
+  
+  auth.onAuthStateChanged(async (user) => {
+    if (user) {
+      await loadUserData();
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('app').classList.add('visible');
+      document.getElementById('loadingScreen').style.display = 'none';
+    } else {
+      document.getElementById('loginScreen').classList.remove('hidden');
+      document.getElementById('app').classList.remove('visible');
+      setTimeout(() => { document.getElementById('loadingScreen').style.display = 'none'; }, 500);
+    }
+  });
+  
+  window.onload = () => {
+    setTimeout(() => { document.getElementById('loadingScreen').classList.add('fade-out'); }, 2000);
+    document.getElementById('sendBtn').addEventListener('click', sendCurrentMessage);
+    document.getElementById('chatInput').addEventListener('keypress', (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); } });
+    document.getElementById('modeSelect').addEventListener('change', saveUISettings);
+    document.getElementById('tempSlider').addEventListener('input', (e)=>{ document.getElementById('tempVal').innerText=e.target.value; saveUISettings(); });
+    document.getElementById('streamToggle').addEventListener('change', saveUISettings);
+    document.getElementById('debugToggle').addEventListener('change', saveUISettings);
+    document.getElementById('closeSettingsBtn').addEventListener('click', toggleSettings);
+    document.getElementById('settingsOverlay').addEventListener('click', toggleSettings);
+  };
+  
+  return { 
+    createChat: () => createNewChatInternal(false,null),
+    createTempChat: () => {
+      const tempChat = { id: Date.now() + '_temp', messages: [], title: '🕶️ Temporary', temp: true, locked: false };
+      chats.unshift(tempChat);
+      currentChatId = tempChat.id;
+      saveChats();
+      renderSidebar();
+      renderMessages(currentChatId);
+      showChatUI();
+    },
+    createSecureChat: () => {
+      let pass = prompt('Set a passcode for this secure chat: 💎');
+      if(pass && pass.trim()) createNewChatInternal(true, pass);
+      else alert('Passcode required!');
+    },
+    toggleSettings, clearAllChats, exportCurrentChat, exportChatHTML, loadUserData
+  };
+})();
+
+window.opal = OpalApp;
+window.opalAuth = opalAuth;
+</script>
+</body>
+</html>
