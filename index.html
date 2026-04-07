@@ -360,6 +360,10 @@
   <label>📡 Streaming (Fancy mode):</label><input type="checkbox" id="streamToggle">
   <label>🐞 Debug Mode:</label><input type="checkbox" id="debugToggle">
   <hr/>
+  <label>🔑 GroqCloud API Key:</label>
+  <input type="password" id="groqApiKeyInput" placeholder="gsk_..." autocomplete="off" style="width:100%; margin:8px 0 14px; padding:10px 12px; border-radius:14px; border:1px solid #3b3b55; background:#1e1e2c; color:#eef2ff;">
+  <small style="display:block; margin-top:-8px; margin-bottom:10px; color:#94a3b8;">Saved in this browser/device.</small>
+  <hr/>
   <button onclick="opal.exportCurrentChat()">📤 Export as TXT</button>
   <button onclick="opal.exportChatHTML()">📄 Export as HTML</button>
   <button onclick="opal.clearAllChats()">🗑️ Clear All Chats</button>
@@ -603,6 +607,8 @@ const opalAuth = {
 // ================================
 const OpalApp = (function(){
   const DEFAULT_GROQ_API_KEY = '';
+  const SETTINGS_STORAGE_KEY = 'opal_settings';
+  const API_CONFIG_STORAGE_KEY = 'opal_api_config';
   
   let chats = [];
   let currentChatId = null;
@@ -619,6 +625,22 @@ const OpalApp = (function(){
   let currentUser = null;
   
   const OPAL_IDENTITY = "You are Opal, a sharp, helpful, and creative AI assistant. Your name is Opal. Always introduce yourself as Opal. You think outside the box and apologize sincerely when things go wrong. Use emojis occasionally (💎, ✨, 🤔, 🎯, 💭). Sign off with '— 💎 Opal' for longer responses.";
+
+  function loadPersistedSettings() {
+    try {
+      const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+      if (savedSettings && typeof savedSettings === 'object') {
+        settings = { ...settings, ...savedSettings };
+      }
+    } catch (_error) {}
+
+    try {
+      const savedApi = JSON.parse(localStorage.getItem(API_CONFIG_STORAGE_KEY) || '{}');
+      if (savedApi && typeof savedApi === 'object') {
+        apiConfig = { ...apiConfig, ...savedApi };
+      }
+    } catch (_error) {}
+  }
 
   function attachRealtimeSync(user) {
     if (!user) return;
@@ -816,6 +838,12 @@ const OpalApp = (function(){
   async function sendMessageToAI(userText, chatId){
     const chat = chats.find(c=>c.id==chatId);
     if(!chat || isLoading) return;
+
+    if (!apiConfig.key || !apiConfig.key.trim()) {
+      alert('Please add your GroqCloud API key in Settings & API first.');
+      return;
+    }
+
     isLoading = true;
     
     chat.messages.push({ role: 'user', content: userText });
@@ -901,6 +929,7 @@ const OpalApp = (function(){
     document.getElementById('tempVal').innerText = settings.temperature;
     document.getElementById('streamToggle').checked = settings.streaming;
     document.getElementById('debugToggle').checked = settings.debug;
+    document.getElementById('groqApiKeyInput').value = apiConfig.key || '';
   }
   
   function saveUISettings(){
@@ -908,8 +937,14 @@ const OpalApp = (function(){
     settings.temperature = parseFloat(document.getElementById('tempSlider').value);
     settings.streaming = document.getElementById('streamToggle').checked;
     settings.debug = document.getElementById('debugToggle').checked;
-    localStorage.setItem('opal_settings', JSON.stringify(settings));
-    alert('Settings saved!');
+    apiConfig.key = document.getElementById('groqApiKeyInput').value.trim();
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(API_CONFIG_STORAGE_KEY, JSON.stringify({
+      key: apiConfig.key,
+      model: apiConfig.model,
+      url: apiConfig.url,
+      type: apiConfig.type
+    }));
   }
   
   auth.onAuthStateChanged(async (user) => {
@@ -934,15 +969,19 @@ const OpalApp = (function(){
   });
   
   window.onload = () => {
+    loadPersistedSettings();
     setTimeout(() => { document.getElementById('loadingScreen').classList.add('fade-out'); }, 2000);
     document.getElementById('sendBtn').addEventListener('click', sendCurrentMessage);
-    document.getElementById('chatInput').addEventListener('keypress', (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); } });
+    document.getElementById('chatInput').addEventListener('keydown', (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); } });
     document.getElementById('modeSelect').addEventListener('change', saveUISettings);
     document.getElementById('tempSlider').addEventListener('input', (e)=>{ document.getElementById('tempVal').innerText=e.target.value; saveUISettings(); });
     document.getElementById('streamToggle').addEventListener('change', saveUISettings);
     document.getElementById('debugToggle').addEventListener('change', saveUISettings);
+    document.getElementById('groqApiKeyInput').addEventListener('change', saveUISettings);
+    document.getElementById('groqApiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveUISettings(); });
     document.getElementById('closeSettingsBtn').addEventListener('click', toggleSettings);
     document.getElementById('settingsOverlay').addEventListener('click', toggleSettings);
+    applyUISettings();
   };
   
   return { 
