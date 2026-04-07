@@ -383,6 +383,41 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+let firestoreEnabled = true;
+
+function isFirestoreConfigError(error) {
+  if (!error) return false;
+  const code = error.code || '';
+  const msg = (error.message || '').toLowerCase();
+  return code === 'not-found' || msg.includes('database (default) does not exist');
+}
+
+function disableFirestore(error) {
+  firestoreEnabled = false;
+  if (isFirestoreConfigError(error)) {
+    console.warn('Firestore is not configured for this project. Falling back to local-only storage.');
+  } else {
+    console.warn('Firestore unavailable. Falling back to local-only storage.', error?.message || error);
+  }
+}
+
+async function ensureUserDoc(user) {
+  if (!user || !firestoreEnabled) return;
+  try {
+    const ref = db.collection('users').doc(user.uid);
+    const userDoc = await ref.get();
+    if (!userDoc.exists) {
+      await ref.set({
+        email: user.email || '',
+        name: user.displayName || '',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        chats: []
+      });
+    }
+  } catch (error) {
+    disableFirestore(error);
+  }
+}
 
 // ================================
 // AUTHENTICATION SYSTEM
@@ -391,8 +426,12 @@ const opalAuth = {
   isLoginMode: true,
   
   showError(msg) {
+    const friendly = (msg || '')
+      .replace('Firebase: ', '')
+      .replace('Error (auth/unauthorized-domain).', 'This domain is not authorized in Firebase. Add your GitHub Pages domain in Firebase Auth > Settings > Authorized domains.')
+      .replace('Error (auth/popup-blocked).', 'Popup blocked by browser. Allow popups for this site and try again.');
     const errorDiv = document.getElementById('loginError');
-    errorDiv.textContent = msg;
+    errorDiv.textContent = friendly;
     errorDiv.style.display = 'block';
     setTimeout(() => errorDiv.style.display = 'none', 3000);
   },
@@ -429,11 +468,7 @@ const opalAuth = {
       } else {
         try {
           await auth.createUserWithEmailAndPassword(email, password);
-          await db.collection('users').doc(auth.currentUser.uid).set({
-            email: email,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            chats: []
-          });
+          await ensureUserDoc(auth.currentUser);
         } catch (createError) {
           if (createError.code === 'auth/email-already-in-use') {
             this.showError('Email already exists! Please sign in instead.');
@@ -457,15 +492,7 @@ const opalAuth = {
     try {
       const result = await auth.signInWithPopup(provider);
       const user = result.user;
-      const userDoc = await db.collection('users').doc(user.uid).get();
-      if (!userDoc.exists) {
-        await db.collection('users').doc(user.uid).set({
-          email: user.email,
-          name: user.displayName,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          chats: []
-        });
-      }
+      await ensureUserDoc(user);
       document.getElementById('loginScreen').classList.add('hidden');
       document.getElementById('app').classList.add('visible');
       document.getElementById('loadingScreen').style.display = 'none';
@@ -490,6 +517,8 @@ const OpalApp = (function(){
   
   let chats = [];
   let currentChatId = null;
+  let syncUnsubscribe = null;
+  let isApplyingRemoteSync = false;
   let settings = { mode: 'fancy', temperature: 0.85, streaming: true, debug: false };
   let apiConfig = { 
     type: 'default',
@@ -501,34 +530,90 @@ const OpalApp = (function(){
   let currentUser = null;
   
   const OPAL_IDENTITY = "You are Opal, a sharp, helpful, and creative AI assistant. Your name is Opal. Always introduce yourself as Opal. You think outside the box and apologize sincerely when things go wrong. Use emojis occasionally (💎, ✨, 🤔, 🎯, 💭). Sign off with '— 💎 Opal' for longer responses.";
+
+  function attachRealtimeSync(user) {
+    if (!firestoreEnabled || !user) return;
+    if (syncUnsubscribe) syncUnsubscribe();
+    syncUnsubscribe = db.collection('users').doc(user.uid).onSnapshot((doc) => {
+      if (!doc.exists) return;
+      const remoteChats = doc.data()?.chats;
+      if (!Array.isArray(remoteChats)) return;
+
+      const localSerialized = JSON.stringify(chats);
+      const remoteSerialized = JSON.stringify(remoteChats);
+      if (localSerialized === remoteSerialized) return;
+
+      isApplyingRemoteSync = true;
+      chats = remoteChats;
+      if (!chats.length) {
+        currentChatId = null;
+        createNewChatInternal(false);
+      } else if (!chats.some(c => c.id == currentChatId)) {
+        currentChatId = chats[0].id;
+      }
+      if (currentUser?.uid) {
+        localStorage.setItem(`opal_chats_${currentUser.uid}`, JSON.stringify(chats));
+      }
+      renderSidebar();
+      if (currentChatId) {
+        showChatUI();
+        renderMessages(currentChatId);
+      }
+      isApplyingRemoteSync = false;
+    }, (error) => {
+      disableFirestore(error);
+      if (syncUnsubscribe) {
+        syncUnsubscribe();
+        syncUnsubscribe = null;
+      }
+    });
+  }
   
   async function loadUserData() {
     const user = auth.currentUser;
     if (!user) return;
     currentUser = user;
     document.getElementById('userEmail').textContent = user.email;
-    
-    const userDoc = await db.collection('users').doc(user.uid).get();
-    if (userDoc.exists && userDoc.data().chats) {
-      chats = userDoc.data().chats;
-    } else {
-      chats = [];
+
+    const localChats = JSON.parse(localStorage.getItem(`opal_chats_${currentUser?.uid}`) || '[]');
+    chats = Array.isArray(localChats) ? localChats : [];
+
+    if (firestoreEnabled) {
+      try {
+        const userDoc = await db.collection('users').doc(user.uid).get();
+        if (userDoc.exists && Array.isArray(userDoc.data().chats) && userDoc.data().chats.length) {
+          chats = userDoc.data().chats;
+          localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
+        } else {
+          await ensureUserDoc(user);
+        }
+      } catch (error) {
+        disableFirestore(error);
+      }
     }
-    
+
     if (!chats.length) createNewChatInternal(false);
     if (chats.length) currentChatId = chats[0].id;
+    attachRealtimeSync(user);
     renderSidebar();
     if (currentChatId) renderMessages(currentChatId);
     applyUISettings();
   }
   
   async function saveChatsToFirestore() {
-    if (!currentUser) return;
-    await db.collection('users').doc(currentUser.uid).set({ chats: chats }, { merge: true });
+    if (!currentUser || !firestoreEnabled || isApplyingRemoteSync) return;
+    try {
+      await db.collection('users').doc(currentUser.uid).set({
+        chats: chats,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      disableFirestore(error);
+    }
   }
   
   function saveChats() { 
-    localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
+    if (currentUser?.uid) localStorage.setItem(`opal_chats_${currentUser.uid}`, JSON.stringify(chats));
     saveChatsToFirestore();
   }
   
@@ -748,11 +833,19 @@ const OpalApp = (function(){
   
   auth.onAuthStateChanged(async (user) => {
     if (user) {
-      await loadUserData();
+      try {
+        await loadUserData();
+      } catch (error) {
+        console.error('Failed loading user data, continuing with local data.', error);
+      }
       document.getElementById('loginScreen').classList.add('hidden');
       document.getElementById('app').classList.add('visible');
       document.getElementById('loadingScreen').style.display = 'none';
     } else {
+      if (syncUnsubscribe) {
+        syncUnsubscribe();
+        syncUnsubscribe = null;
+      }
       document.getElementById('loginScreen').classList.remove('hidden');
       document.getElementById('app').classList.remove('visible');
       setTimeout(() => { document.getElementById('loadingScreen').style.display = 'none'; }, 500);
