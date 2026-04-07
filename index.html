@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
   <title>Opal AI | Intelligent Chat Assistant</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3CradialGradient id='g' cx='35%25' cy='30%25'%3E%3Cstop offset='0%25' stop-color='%2322d3ee'/%3E%3Cstop offset='55%25' stop-color='%237c3aed'/%3E%3Cstop offset='100%25' stop-color='%23000000'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='30' fill='url(%23g)'/%3E%3Cpath d='M20 38c6 8 18 8 24 0' fill='none' stroke='%23c026d3' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='24' cy='26' r='4' fill='%23eef2ff'/%3E%3Ccircle cx='40' cy='26' r='4' fill='%23eef2ff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -394,6 +395,30 @@ let firestoreEnabled = true;
 let rtdbEnabled = !!firebaseConfig.databaseURL;
 let cloudStore = rtdbEnabled ? 'rtdb' : 'firestore';
 
+function toArray(maybeArrayOrObject) {
+  if (!maybeArrayOrObject) return [];
+  if (Array.isArray(maybeArrayOrObject)) return maybeArrayOrObject;
+  if (typeof maybeArrayOrObject === 'object') return Object.values(maybeArrayOrObject);
+  return [];
+}
+
+function normalizeChats(raw) {
+  const arr = toArray(raw).filter(Boolean);
+  return arr.map((c) => {
+    const chat = (c && typeof c === 'object') ? { ...c } : { id: Date.now() + Math.random() * 1000 };
+    chat.id = chat.id ?? (Date.now() + Math.random() * 1000);
+    chat.title = chat.title ?? 'Chat';
+    chat.createdAt = chat.createdAt ?? Date.now();
+    chat.locked = !!chat.locked;
+    chat.temp = !!chat.temp;
+    chat.messages = toArray(chat.messages).map((m) => {
+      const msg = (m && typeof m === 'object') ? m : { role: 'user', content: String(m ?? '') };
+      return { role: msg.role === 'ai' ? 'ai' : 'user', content: String(msg.content ?? '') };
+    });
+    return chat;
+  });
+}
+
 function isFirestoreConfigError(error) {
   if (!error) return false;
   const code = error.code || '';
@@ -421,7 +446,9 @@ async function readCloudUserDoc(uid) {
   if (cloudStore === 'rtdb' && rtdbEnabled) {
     try {
       const snap = await rtdb.ref(`users/${uid}`).once('value');
-      return snap.val();
+      const val = snap.val();
+      if (val && val.chats) val.chats = normalizeChats(val.chats);
+      return val;
     } catch (error) {
       disableRtdb(error);
     }
@@ -473,7 +500,11 @@ function subscribeCloudUserDoc(uid, onData, onError) {
 
   if (cloudStore === 'rtdb' && rtdbEnabled) {
     const ref = rtdb.ref(`users/${uid}`);
-    const callback = (snap) => onData(snap.val() || null);
+    const callback = (snap) => {
+      const val = snap.val() || null;
+      if (val && val.chats) val.chats = normalizeChats(val.chats);
+      onData(val);
+    };
     const cancel = (error) => {
       disableRtdb(error);
       if (onError) onError(error);
@@ -583,6 +614,11 @@ const opalAuth = {
   async googleLogin() {
     const provider = new firebase.auth.GoogleAuthProvider();
     try {
+      const isGithubPages = location.hostname.endsWith('github.io');
+      if (isGithubPages) {
+        await auth.signInWithRedirect(provider);
+        return;
+      }
       const result = await auth.signInWithPopup(provider);
       const user = result.user;
       await ensureUserDoc(user);
@@ -686,12 +722,12 @@ const OpalApp = (function(){
     document.getElementById('userEmail').textContent = user.email;
 
     const localChats = JSON.parse(localStorage.getItem(`opal_chats_${currentUser?.uid}`) || '[]');
-    chats = Array.isArray(localChats) ? localChats : [];
+    chats = normalizeChats(localChats);
 
     try {
       const userDoc = await readCloudUserDoc(user.uid);
       if (userDoc && Array.isArray(userDoc.chats) && userDoc.chats.length) {
-        chats = userDoc.chats;
+        chats = normalizeChats(userDoc.chats);
         localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
       } else {
         await ensureUserDoc(user);
@@ -799,7 +835,8 @@ const OpalApp = (function(){
     const container = document.getElementById('messagesContainer');
     if(!container || !chat) return;
     container.innerHTML = '';
-    for(let msg of chat.messages){
+    const safeMessages = Array.isArray(chat.messages) ? chat.messages : normalizeChats([chat])[0].messages;
+    for(let msg of safeMessages){
       const row = document.createElement('div');
       row.className = `message-row ${msg.role === 'user' ? 'user-row' : 'ai-row'}`;
       const bubble = document.createElement('div');
@@ -837,7 +874,12 @@ const OpalApp = (function(){
   
   async function sendMessageToAI(userText, chatId){
     const chat = chats.find(c=>c.id==chatId);
-    if(!chat || isLoading) return;
+    if(isLoading) return;
+    if(!chat) {
+      createNewChatInternal(false);
+    }
+    const targetChat = chats.find(c=>c.id==chatId) || chats[0];
+    if(!targetChat) return;
 
     if (!apiConfig.key || !apiConfig.key.trim()) {
       alert('Please add your GroqCloud API key in Settings & API first.');
@@ -846,14 +888,15 @@ const OpalApp = (function(){
 
     isLoading = true;
     
-    chat.messages.push({ role: 'user', content: userText });
+    targetChat.messages = Array.isArray(targetChat.messages) ? targetChat.messages : [];
+    targetChat.messages.push({ role: 'user', content: userText });
     saveChats();
     renderMessages(chatId);
     
     const apiMessages = [{ role: "system", content: OPAL_IDENTITY }, ...chat.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
     
-    const aiMsgIndex = chat.messages.length;
-    chat.messages.push({ role: 'ai', content: '' });
+    const aiMsgIndex = targetChat.messages.length;
+    targetChat.messages.push({ role: 'ai', content: '' });
     saveChats();
     renderMessages(chatId);
     
@@ -865,10 +908,10 @@ const OpalApp = (function(){
       const json = await resp.json();
       fullResponse = json.choices?.[0]?.message?.content || "Opal here - let me think... 💭";
       const personalityResponse = applyOpalPersonality(fullResponse);
-      chat.messages[aiMsgIndex].content = personalityResponse;
+      if (targetChat.messages[aiMsgIndex]) targetChat.messages[aiMsgIndex].content = personalityResponse;
       renderMessages(chatId);
     }catch(err){
-      chat.messages[aiMsgIndex].content = `💎 Opal's apologies! Error: ${err.message}`;
+      if (targetChat.messages[aiMsgIndex]) targetChat.messages[aiMsgIndex].content = `💎 Opal's apologies! Error: ${err.message}`;
       renderMessages(chatId);
     }
     isLoading = false;
@@ -971,6 +1014,7 @@ const OpalApp = (function(){
   window.onload = () => {
     loadPersistedSettings();
     setTimeout(() => { document.getElementById('loadingScreen').classList.add('fade-out'); }, 2000);
+    auth.getRedirectResult().catch(() => {});
     document.getElementById('sendBtn').addEventListener('click', sendCurrentMessage);
     document.getElementById('chatInput').addEventListener('keydown', (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); } });
     document.getElementById('modeSelect').addEventListener('change', saveUISettings);
