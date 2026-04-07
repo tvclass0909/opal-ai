@@ -835,7 +835,8 @@ const OpalApp = (function(){
     const container = document.getElementById('messagesContainer');
     if(!container || !chat) return;
     container.innerHTML = '';
-    const safeMessages = Array.isArray(chat.messages) ? chat.messages : normalizeChats([chat])[0].messages;
+    if (!Array.isArray(chat.messages)) chat.messages = toArray(chat.messages);
+    const safeMessages = chat.messages;
     for(let msg of safeMessages){
       const row = document.createElement('div');
       row.className = `message-row ${msg.role === 'user' ? 'user-row' : 'ai-row'}`;
@@ -863,7 +864,9 @@ const OpalApp = (function(){
   
   async function regenerateLastAI(chatId){
     const chat = chats.find(c=>c.id==chatId);
-    if(!chat || chat.messages.length<2) return;
+    if(!chat) return;
+    if (!Array.isArray(chat.messages)) chat.messages = toArray(chat.messages);
+    if(chat.messages.length < 2) return;
     const lastUserMsg = [...chat.messages].reverse().find(m=>m.role==='user');
     if(!lastUserMsg) return;
     if(chat.messages[chat.messages.length-1].role === 'ai') chat.messages.pop();
@@ -873,13 +876,13 @@ const OpalApp = (function(){
   }
   
   async function sendMessageToAI(userText, chatId){
-    const chat = chats.find(c=>c.id==chatId);
     if(isLoading) return;
-    if(!chat) {
+    if(!chats.find(c=>c.id==chatId)) {
       createNewChatInternal(false);
     }
-    const targetChat = chats.find(c=>c.id==chatId) || chats[0];
+    const targetChat = chats.find(c=>c.id==chatId) || chats.find(c=>c.id==currentChatId) || chats[0];
     if(!targetChat) return;
+    if (!Array.isArray(targetChat.messages)) targetChat.messages = toArray(targetChat.messages);
 
     if (!apiConfig.key || !apiConfig.key.trim()) {
       alert('Please add your GroqCloud API key in Settings & API first.');
@@ -891,14 +894,17 @@ const OpalApp = (function(){
     targetChat.messages = Array.isArray(targetChat.messages) ? targetChat.messages : [];
     targetChat.messages.push({ role: 'user', content: userText });
     saveChats();
-    renderMessages(chatId);
+    renderMessages(targetChat.id);
     
-    const apiMessages = [{ role: "system", content: OPAL_IDENTITY }, ...chat.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
+    const apiMessages = [
+      { role: "system", content: OPAL_IDENTITY },
+      ...targetChat.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+    ];
     
     const aiMsgIndex = targetChat.messages.length;
     targetChat.messages.push({ role: 'ai', content: '' });
     saveChats();
-    renderMessages(chatId);
+    renderMessages(targetChat.id);
     
     let fullResponse = '';
     try{
@@ -909,13 +915,13 @@ const OpalApp = (function(){
       fullResponse = json.choices?.[0]?.message?.content || "Opal here - let me think... 💭";
       const personalityResponse = applyOpalPersonality(fullResponse);
       if (targetChat.messages[aiMsgIndex]) targetChat.messages[aiMsgIndex].content = personalityResponse;
-      renderMessages(chatId);
+      renderMessages(targetChat.id);
     }catch(err){
       if (targetChat.messages[aiMsgIndex]) targetChat.messages[aiMsgIndex].content = `💎 Opal's apologies! Error: ${err.message}`;
-      renderMessages(chatId);
+      renderMessages(targetChat.id);
     }
     isLoading = false;
-    if(!chat.temp) saveChats();
+    if(!targetChat.temp) saveChats();
   }
   
   async function sendCurrentMessage(){
@@ -929,7 +935,9 @@ const OpalApp = (function(){
   
   function exportCurrentChat(){
     const chat = chats.find(c=>c.id==currentChatId);
-    if(!chat || !chat.messages.length) { alert('No messages to export'); return; }
+    if(!chat) { alert('No messages to export'); return; }
+    if (!Array.isArray(chat.messages)) chat.messages = toArray(chat.messages);
+    if(!chat.messages.length) { alert('No messages to export'); return; }
     let content = `💎 Opal AI Chat Export\n${new Date().toLocaleString()}\n${'='.repeat(50)}\n\n`;
     chat.messages.forEach(msg => { content += `${msg.role.toUpperCase()}:\n${msg.content}\n\n${'-'.repeat(40)}\n\n`; });
     const blob = new Blob([content], {type: 'text/plain'});
@@ -942,6 +950,7 @@ const OpalApp = (function(){
   function exportChatHTML(){
     const chat = chats.find(c=>c.id==currentChatId);
     if(!chat) return;
+    if (!Array.isArray(chat.messages)) chat.messages = toArray(chat.messages);
     let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Opal AI Export</title><style>body{font-family:sans-serif;background:#0a0a0f;color:#eee;padding:20px;} .user{background:#7c3aed;padding:12px;border-radius:12px;margin:10px 0;} .ai{background:#1e1e2c;padding:12px;border-radius:12px;margin:10px 0;}</style></head><body><h1>💎 Opal AI Chat Export</h1><p>${new Date()}</p>`;
     chat.messages.forEach(msg => { html += `<div class="${msg.role}"><strong>${msg.role.toUpperCase()}:</strong><br/>${marked.parse(msg.content)}</div>`; });
     html += `</body></html>`;
