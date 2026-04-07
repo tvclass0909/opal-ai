@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -373,6 +374,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAY7ys37mWRa8AnNX-z87uLAkEtII3elPU",
   authDomain: "opal-ai-chat.firebaseapp.com",
   projectId: "opal-ai-chat",
+  databaseURL: "https://opal-ai-chat-default-rtdb.firebaseio.com/",
   storageBucket: "opal-ai-chat.firebasestorage.app",
   messagingSenderId: "20527527841",
   appId: "1:20527527841:web:92edd00d4b6d674bc23de0",
@@ -383,7 +385,10 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const rtdb = firebase.database();
 let firestoreEnabled = true;
+let rtdbEnabled = !!firebaseConfig.databaseURL;
+let cloudStore = rtdbEnabled ? 'rtdb' : 'firestore';
 
 function isFirestoreConfigError(error) {
   if (!error) return false;
@@ -401,21 +406,105 @@ function disableFirestore(error) {
   }
 }
 
+function disableRtdb(error) {
+  rtdbEnabled = false;
+  console.warn('Realtime Database unavailable. Falling back to local-only storage.', error?.message || error);
+}
+
+async function readCloudUserDoc(uid) {
+  if (!uid) return null;
+
+  if (cloudStore === 'rtdb' && rtdbEnabled) {
+    try {
+      const snap = await rtdb.ref(`users/${uid}`).once('value');
+      return snap.val();
+    } catch (error) {
+      disableRtdb(error);
+    }
+  }
+
+  if (firestoreEnabled) {
+    try {
+      const snap = await db.collection('users').doc(uid).get();
+      return snap.exists ? snap.data() : null;
+    } catch (error) {
+      disableFirestore(error);
+    }
+  }
+  return null;
+}
+
+async function writeCloudUserDoc(uid, payload, merge = true) {
+  if (!uid) return false;
+
+  if (cloudStore === 'rtdb' && rtdbEnabled) {
+    try {
+      const ref = rtdb.ref(`users/${uid}`);
+      if (merge) {
+        await ref.update(payload);
+      } else {
+        await ref.set(payload);
+      }
+      return true;
+    } catch (error) {
+      disableRtdb(error);
+      return false;
+    }
+  }
+
+  if (firestoreEnabled) {
+    try {
+      await db.collection('users').doc(uid).set(payload, { merge });
+      return true;
+    } catch (error) {
+      disableFirestore(error);
+      return false;
+    }
+  }
+  return false;
+}
+
+function subscribeCloudUserDoc(uid, onData, onError) {
+  if (!uid) return null;
+
+  if (cloudStore === 'rtdb' && rtdbEnabled) {
+    const ref = rtdb.ref(`users/${uid}`);
+    const callback = (snap) => onData(snap.val() || null);
+    const cancel = (error) => {
+      disableRtdb(error);
+      if (onError) onError(error);
+    };
+    ref.on('value', callback, cancel);
+    return () => ref.off('value', callback);
+  }
+
+  if (firestoreEnabled) {
+    return db.collection('users').doc(uid).onSnapshot(
+      (doc) => onData(doc.exists ? doc.data() : null),
+      (error) => {
+        disableFirestore(error);
+        if (onError) onError(error);
+      }
+    );
+  }
+
+  return null;
+}
+
 async function ensureUserDoc(user) {
-  if (!user || !firestoreEnabled) return;
+  if (!user) return;
   try {
-    const ref = db.collection('users').doc(user.uid);
-    const userDoc = await ref.get();
-    if (!userDoc.exists) {
-      await ref.set({
+    const userDoc = await readCloudUserDoc(user.uid);
+    if (!userDoc) {
+      await writeCloudUserDoc(user.uid, {
         email: user.email || '',
         name: user.displayName || '',
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdAt: Date.now(),
         chats: []
-      });
+      }, false);
     }
   } catch (error) {
-    disableFirestore(error);
+    console.warn('Unable to initialize user cloud document, local mode remains available.', error?.message || error);
   }
 }
 
@@ -532,11 +621,11 @@ const OpalApp = (function(){
   const OPAL_IDENTITY = "You are Opal, a sharp, helpful, and creative AI assistant. Your name is Opal. Always introduce yourself as Opal. You think outside the box and apologize sincerely when things go wrong. Use emojis occasionally (💎, ✨, 🤔, 🎯, 💭). Sign off with '— 💎 Opal' for longer responses.";
 
   function attachRealtimeSync(user) {
-    if (!firestoreEnabled || !user) return;
+    if (!user) return;
     if (syncUnsubscribe) syncUnsubscribe();
-    syncUnsubscribe = db.collection('users').doc(user.uid).onSnapshot((doc) => {
-      if (!doc.exists) return;
-      const remoteChats = doc.data()?.chats;
+    syncUnsubscribe = subscribeCloudUserDoc(user.uid, (docData) => {
+      if (!docData) return;
+      const remoteChats = docData.chats;
       if (!Array.isArray(remoteChats)) return;
 
       const localSerialized = JSON.stringify(chats);
@@ -560,8 +649,7 @@ const OpalApp = (function(){
         renderMessages(currentChatId);
       }
       isApplyingRemoteSync = false;
-    }, (error) => {
-      disableFirestore(error);
+    }, (_error) => {
       if (syncUnsubscribe) {
         syncUnsubscribe();
         syncUnsubscribe = null;
@@ -578,18 +666,15 @@ const OpalApp = (function(){
     const localChats = JSON.parse(localStorage.getItem(`opal_chats_${currentUser?.uid}`) || '[]');
     chats = Array.isArray(localChats) ? localChats : [];
 
-    if (firestoreEnabled) {
-      try {
-        const userDoc = await db.collection('users').doc(user.uid).get();
-        if (userDoc.exists && Array.isArray(userDoc.data().chats) && userDoc.data().chats.length) {
-          chats = userDoc.data().chats;
-          localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
-        } else {
-          await ensureUserDoc(user);
-        }
-      } catch (error) {
-        disableFirestore(error);
+    try {
+      const userDoc = await readCloudUserDoc(user.uid);
+      if (userDoc && Array.isArray(userDoc.chats) && userDoc.chats.length) {
+        chats = userDoc.chats;
+        localStorage.setItem(`opal_chats_${currentUser?.uid}`, JSON.stringify(chats));
+      } else {
+        await ensureUserDoc(user);
       }
+    } catch (_error) {
     }
 
     if (!chats.length) createNewChatInternal(false);
@@ -601,15 +686,11 @@ const OpalApp = (function(){
   }
   
   async function saveChatsToFirestore() {
-    if (!currentUser || !firestoreEnabled || isApplyingRemoteSync) return;
-    try {
-      await db.collection('users').doc(currentUser.uid).set({
-        chats: chats,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-    } catch (error) {
-      disableFirestore(error);
-    }
+    if (!currentUser || isApplyingRemoteSync) return;
+    await writeCloudUserDoc(currentUser.uid, {
+      chats: chats,
+      updatedAt: Date.now()
+    }, true);
   }
   
   function saveChats() { 
